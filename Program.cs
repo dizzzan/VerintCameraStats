@@ -1,11 +1,17 @@
 ﻿
+using System;
 using System.Data.SqlClient;
+using System.IO;
 using System.Net;
+using System.Threading.Tasks;
 using CommandLine;
 
 
-return await Parser.Default.ParseArguments<CommandLineOptions>(args)
-        .MapResult(async (CommandLineOptions opts) =>
+class VerintVideoStatus {
+   static void Main(string[] args) {
+        
+   Parser.Default.ParseArguments<CommandLineOptions>(args)
+    .WithParsed<CommandLineOptions>(opts =>
         {
 
             var rec = opts.Machine ?? Dns.GetHostName();
@@ -53,9 +59,13 @@ return await Parser.Default.ParseArguments<CommandLineOptions>(args)
                     command.Parameters.Add(new SqlParameter("@host", System.Data.SqlDbType.VarChar));
                     command.Parameters["@host"].Value = rec;
 
-                    Console.WriteLine($"Finding cameras assigned to {rec}");
                     using (SqlDataReader reader = command.ExecuteReader())
                     {
+                        
+                    Console.WriteLine($"Enumerating cameras assigned to {rec} ...");
+                    Console.WriteLine();
+
+
                         while (reader.Read())
                         {
                             var camId = reader.GetInt32(0);
@@ -63,21 +73,21 @@ return await Parser.Default.ParseArguments<CommandLineOptions>(args)
                             var device = reader.GetString(5);
                             var path = Path.Combine(device, opts.Path, $"CAM{camId.ToString("00000")}");
 
-                            Console.WriteLine($"Enumerating CAM {camId} - {camName} - {path}");
+                            Console.WriteLine($"CAM {camId} - {camName} - {path}");
 
                             var folderSize = GetDirectorySize(new DirectoryInfo(path), cutoff);
                             Console.WriteLine($"        Total Size: {Math.Round(folderSize/1e9, 3)} GB");
-                            Console.WriteLine($"        Avg Bitrate: {Math.Round((decimal)folderSize/opts.Days/86400/1000, 3)} Kbps");
+                            Console.WriteLine($"        Avg Bitrate: {Math.Round((decimal)folderSize/opts.Days/86400/125, 3)} Kbps");
+                            Console.WriteLine();
                         }
                     }
                 }
             }
+        });
 
-            return 0;
-        },
-        errs => Task.FromResult(-1)); // Invalid arguments
+    }
 
-
+    
 
 static long GetDirectorySize(DirectoryInfo directoryInfo, DateTime cutoff)
 {
@@ -116,4 +126,5 @@ static long DirSize(DirectoryInfo d, DateTime cutoff)
         size += DirSize(di, cutoff);
     }
     return size;
+}
 }
