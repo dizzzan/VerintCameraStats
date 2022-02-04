@@ -7,22 +7,29 @@ using System.Threading.Tasks;
 using CommandLine;
 
 
-class VerintVideoStatus {
-   static void Main(string[] args) {
-        
-   Parser.Default.ParseArguments<CommandLineOptions>(args)
-    .WithParsed<CommandLineOptions>(opts =>
-        {
+class VerintVideoStatus
+{
+    static void Main(string[] args)
+    {
 
-            var rec = opts.Machine ?? Dns.GetHostName();
-            var cutoff = DateTime.Now.AddDays(-opts.Days);
+        Console.WriteLine("*******************************************************************");
+        Parser.Default.ParseArguments<CommandLineOptions>(args)
+         .WithParsed<CommandLineOptions>(opts =>
+             {
 
-            Console.WriteLine($"Using cutoff {cutoff}");
-            using (SqlConnection connection = new SqlConnection(opts.ConnString))
-            {
-                connection.Open();
+                 var rec = opts.Machine ?? Dns.GetHostName();
+                 var cutoff = DateTime.Now.AddDays(-opts.Days);
+                 var writer = new OutputWriter(opts.OutputFile);
 
-                String sql = @"	SELECT DISTINCT
+                 Console.WriteLine($"Using cutoff {cutoff}");
+
+                 Console.WriteLine("*******************************************************************");
+
+                 using (SqlConnection connection = new SqlConnection(opts.ConnString))
+                 {
+                     connection.Open();
+
+                     String sql = @"	SELECT DISTINCT
                                     cam.id [CamId] -- 0
                                     , DEV.IPAddress [IP Address]  -- 1
                                     , substring(convert(varchar(100), dev.DeviceGUID), 25,12) [MAC Address]  -- 2
@@ -53,78 +60,98 @@ class VerintVideoStatus {
 
                                     and IPAddress is not null";
 
-                using (SqlCommand command = new SqlCommand(sql, connection))
-                {
+                     using (SqlCommand command = new SqlCommand(sql, connection))
+                     {
 
-                    command.Parameters.Add(new SqlParameter("@host", System.Data.SqlDbType.VarChar));
-                    command.Parameters["@host"].Value = rec;
+                         command.Parameters.Add(new SqlParameter("@host", System.Data.SqlDbType.VarChar));
+                         command.Parameters["@host"].Value = rec;
 
-                    using (SqlDataReader reader = command.ExecuteReader())
-                    {
-                        
-                    Console.WriteLine($"Enumerating cameras assigned to {rec} ...");
-                    Console.WriteLine();
+                         using (SqlDataReader reader = command.ExecuteReader())
+                         {
+
+                             Console.WriteLine($"Enumerating cameras assigned to {rec} ...");
+                             Console.WriteLine();
 
 
-                        while (reader.Read())
-                        {
-                            var camId = reader.GetInt32(0);
-                            var camName = reader.GetString(3);
-                            var device = reader.GetString(5);
-                            var path = Path.Combine(device, opts.Path, $"CAM{camId.ToString("00000")}");
+                             while (reader.Read())
+                             {
+                                 var camId = reader.GetInt32(0);
+                                 var camName = reader.GetString(3);
+                                 var device = reader.GetString(5);
+                                 var path = Path.Combine(device, opts.Path, $"CAM{camId.ToString("00000")}");
 
-                            Console.WriteLine($"CAM {camId} - {camName} - {path}");
+                                 Console.WriteLine($"CAM {camId} - {camName} - {path}");
 
-                            var folderSize = GetDirectorySize(new DirectoryInfo(path), cutoff);
-                            Console.WriteLine($"        Total Size: {Math.Round(folderSize/1e9, 3)} GB");
-                            Console.WriteLine($"        Avg Bitrate: {Math.Round((decimal)folderSize/opts.Days/86400/125, 3)} Kbps");
-                            Console.WriteLine();
-                        }
-                    }
-                }
+                                 var folderSize = GetDirectorySize(new DirectoryInfo(path), cutoff);
+                                 Console.WriteLine($"        Total Size: {Math.Round(folderSize / 1e9, 3)} GB");
+                                 Console.WriteLine($"        Avg Bitrate: {Math.Round((decimal)folderSize / opts.Days / 86400 / 125, 3)} Kbps");
+                                 Console.WriteLine();
+
+                                 writer.WriteLine(new String[] {camId.ToString(), camName, device, path, folderSize.ToString(), opts.Days.ToString() });
+                             }
+                         }
+                     }
+                 }
+             });
+
+    }
+
+
+
+    static long GetDirectorySize(DirectoryInfo directoryInfo, DateTime cutoff)
+    {
+        var startDirectorySize = default(long);
+        if (directoryInfo == null || !directoryInfo.Exists)
+            return startDirectorySize; //Return 0 while Directory does not exist.
+
+        //Add size of files in the Current Directory to main size.
+        foreach (var fileInfo in directoryInfo.GetFiles())
+        {
+            if (fileInfo.LastWriteTime >= cutoff)
+            {
+                System.Threading.Interlocked.Add(ref startDirectorySize, fileInfo.Length);
             }
-        });
+        }
 
+        System.Threading.Tasks.Parallel.ForEach(directoryInfo.GetDirectories(), (subDirectory) =>
+            System.Threading.Interlocked.Add(ref startDirectorySize, GetDirectorySize(subDirectory, cutoff)));
+
+        return startDirectorySize;
+    }
+
+}
+
+class OutputWriter
+{
+
+    private StreamWriter Writer { get; set; }
+    public OutputWriter(string path)
+    {
+
+        if (!string.IsNullOrEmpty(path))
+        {
+
+            if (File.Exists(path))
+            {
+                throw new Exception("Output file aleady exists.");
+            }
+            Writer = File.CreateText(path);
+
+            Console.WriteLine($"Writing output to {path}");
+        }
+
+    }
+
+    public void WriteLine(string text)
+    {
+        if (Writer != null) 
+            Writer.WriteLine(text);
+    }
+
+    public void WriteLine(string[] arr) {
+        if (Writer != null) 
+            Writer.WriteLine(string.Join(',', arr));
     }
 
     
-
-static long GetDirectorySize(DirectoryInfo directoryInfo, DateTime cutoff)
-{
-    var startDirectorySize = default(long);
-    if (directoryInfo == null || !directoryInfo.Exists)
-        return startDirectorySize; //Return 0 while Directory does not exist.
-
-    //Add size of files in the Current Directory to main size.
-    foreach (var fileInfo in directoryInfo.GetFiles())
-    {
-        if (fileInfo.LastWriteTime >= cutoff) {
-            System.Threading.Interlocked.Add(ref startDirectorySize, fileInfo.Length);
-        }
-    }
-
-    System.Threading.Tasks.Parallel.ForEach(directoryInfo.GetDirectories(), (subDirectory) =>
-        System.Threading.Interlocked.Add(ref startDirectorySize, GetDirectorySize(subDirectory, cutoff)));
-
-    return startDirectorySize;  
-}
-
-static long DirSize(DirectoryInfo d, DateTime cutoff)
-{
-    long size = 0;
-    // Add file sizes.
-    FileInfo[] fis = d.GetFiles();
-    foreach (FileInfo fi in fis)
-    {
-        if (fi.LastWriteTime <= cutoff)
-            size += fi.Length;
-    }
-    // Add subdirectory sizes.
-    DirectoryInfo[] dis = d.GetDirectories();
-    foreach (DirectoryInfo di in dis)
-    {
-        size += DirSize(di, cutoff);
-    }
-    return size;
-}
 }
