@@ -30,39 +30,43 @@ namespace VerintVideoStats
                      using (var context = new CamContext(opts.ConnString))
                      {
 
-                         var cams = context.Cams.FromSqlRaw(@"	SELECT DISTINCT
+                        var sql = File.Exists("query.sql") ? File.ReadAllText("query.sql") : @"	SELECT DISTINCT
                                     cam.id [CamId]
                                     , DEV.IPAddress [IPAddress]  
                                     , substring(convert(varchar(100), dev.DeviceGUID), 25,12) [MACAddress]  
                                     , cam.CamDesc [Description] 
+                                    , dman.ManufacturerName [Manufacturer]
+                                    , dm.ModelName [Model]
                                     , COMP.compname [Recorder]
                                     , fs.Device [Device] 
                                     , r.id [RecorderId] 
 
                                     FROM CameraGroups CG WITH (NOLOCK) 
-                                    inner join Cameras3 CAM WITH (NOLOCK) ON CG.CameraID = CAM.ID
-                                    inner join CameraStreams CS WITH (NOLOCK) ON CAM.ID = CS.CameraID AND CS.StreamType = 0
-                                    inner join DeviceInterfaceVideoInputEncoders DVIE WITH (NOLOCK) ON CS.VideoEncoderID = DVIE.ID
-                                    inner join CameraServiceProfiles CSP WITH (NOLOCK) ON CAM.ID = CSP.CameraID
-                                    inner join Devices3 DEV WITH (NOLOCK) ON DEV.ID = CSP.DeviceID
-                                    inner join [devicemodelinfos] DMI WITH (NOLOCK) on DMI.deviceid=DEV.id
-                                    inner join [devicemodels] DM WITH (NOLOCK) on DM.ID=DMI.DeviceModelID
-                                    inner join [DeviceManufacturers] DMAN WITH (NOLOCK) on DMAN.ID=DM.ManufacturerID
-                                    inner join [DeviceInterfaceVideoInputs] DIV WITH (NOLOCK) on CSP.devicevideoinputid =DIV.ID
-                                    inner join computers COMP WITH (NOLOCK) on DEV.ComputerID=COMP.compid
-                                    INNER JOIN recorders r WITH (NOLOCK) on comp.compid=r.id
-                                    INNER JOIN RecorderGroups rg WITH (NOLOCK) on rg.Recorder1ID=r.ID or rg.Recorder2ID=r.id
-                                    INNER JOIN Recorder_Location rl WITH (NOLOCK) on rl.RecorderID=r.id
-                                    INNER JOIN Locations l WITH (NOLOCK)  on l.id=rl.LocationID
-                                    inner join RecorderFileStorage rfs WITH (NOLOCK) on rfs.RecorderId=r.ID
-                                    inner join FileStorage fs WITH (NOLOCK) on rfs.FileStorageId=fs.Id
+                                    LEFT JOIN Cameras3 CAM WITH (NOLOCK) ON CG.CameraID = CAM.ID
+                                    LEFT JOIN CameraStreams CS WITH (NOLOCK) ON CAM.ID = CS.CameraID AND CS.StreamType = 0
+                                    LEFT JOIN DeviceInterfaceVideoInputEncoders DVIE WITH (NOLOCK) ON CS.VideoEncoderID = DVIE.ID
+                                    LEFT JOIN CameraServiceProfiles CSP WITH (NOLOCK) ON CAM.ID = CSP.CameraID
+                                    LEFT JOIN Devices3 DEV WITH (NOLOCK) ON DEV.ID = CSP.DeviceID
+                                    LEFT JOIN [devicemodelinfos] DMI WITH (NOLOCK) on DMI.deviceid=DEV.id
+                                    LEFT JOIN [devicemodels] DM WITH (NOLOCK) on DM.ID=DMI.DeviceModelID
+                                    LEFT JOIN [DeviceManufacturers] DMAN WITH (NOLOCK) on DMAN.ID=DM.ManufacturerID
+                                    LEFT JOIN [DeviceInterfaceVideoInputs] DIV WITH (NOLOCK) on CSP.devicevideoinputid =DIV.ID
+                                    LEFT JOIN computers COMP WITH (NOLOCK) on DEV.ComputerID=COMP.compid
+                                    LEFT JOIN recorders r WITH (NOLOCK) on comp.compid=r.id
+                                    LEFT JOIN RecorderGroups rg WITH (NOLOCK) on rg.Recorder1ID=r.ID or rg.Recorder2ID=r.id
+                                    LEFT JOIN Recorder_Location rl WITH (NOLOCK) on rl.RecorderID=r.id
+                                    LEFT JOIN Locations l WITH (NOLOCK)  on l.id=rl.LocationID
+                                    LEFT JOIN RecorderFileStorage rfs WITH (NOLOCK) on rfs.RecorderId=r.ID
+                                    LEFT JOIN FileStorage fs WITH (NOLOCK) on rfs.FileStorageId=fs.Id
 
                                     where comp.compname = {0}
 
                                     and IPAddress is not null
                                     
                                     order by cam.id
-                                    ", rec).ToList().GroupBy(x => x.CamId);
+                                    ";
+
+                         var cams = context.Cams.FromSqlRaw(sql, rec).ToList().GroupBy(x => x.CamId);
 
 
                          Console.WriteLine($"Enumerating cameras assigned to {rec} ...");
@@ -74,13 +78,14 @@ namespace VerintVideoStats
                              var camId = camGroup.First().CamId;
                              var camName = camGroup.First().Description;
                              long aggrFolderSize = 0;
+                             string camInfo = "";
 
                              Console.WriteLine($"CAM {camId} - {camName} - {camGroup.Count()} device(s)");
                              foreach (var cam in camGroup)
                              {
-
+                                 camInfo = cam.ToString();
                                  var device = cam.Device;
-                                 var path = Path.Combine(device, opts.Path, $"CAM{camId.ToString("00000")}");
+                                 var path = Path.Combine(device.Length == 1 ? $"{device}:" : device, opts.Path, $"CAM{camId.ToString("00000")}");
                                  Console.WriteLine($"   Enumerate device: {path} ...");
 
                                  var folderSize = GetDirectorySize(new DirectoryInfo(path), cutoff);
@@ -95,7 +100,7 @@ namespace VerintVideoStats
                              Console.WriteLine($"   Aggregate Size: {Math.Round(aggrFolderSize / 1e9, 3)} GB");
                              Console.WriteLine();
 
-                             writer.WriteLine(new String[] { camId.ToString(), camName, aggrFolderSize.ToString(), opts.Days.ToString() });
+                             writer.WriteLine(new String[] { camInfo, aggrFolderSize.ToString(), opts.Days.ToString() });
 
                          }
 
@@ -159,7 +164,7 @@ namespace VerintVideoStats
         {
             if (Writer != null)
             {
-                var str = string.Join(',', arr);
+                var str = string.Join(';', arr);
                 Writer.WriteLine(str);
             }
         }
